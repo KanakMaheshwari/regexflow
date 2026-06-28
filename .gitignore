@@ -1,0 +1,24 @@
+# Python Virtual Environment
+Include/
+Lib/
+Scripts/
+pyvenv.cfg
+
+# Python
+__pycache__/
+*.pyc
+
+# Database
+db.sqlite3
+
+# Django Uploads
+uploads/
+
+# Node
+node_modules/
+
+# Environment Variables
+.env
+
+# Build
+dist/
