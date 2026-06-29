@@ -15,10 +15,11 @@ def upload_file(request):
         return Response({"error":"No file uploaded."},status=400)
     storage=FileSystemStorage()
     filename=storage.save(uploaded_file.name,uploaded_file)
-    job=ProcessingJob.objects.create(filename=filename)
+    job=ProcessingJob.objects.create(filename=filename, status='QUEUED', progress=0)
     return Response({"message":"Upload successful.",
                      "job_id":job.id,
                      "status":job.status,
+                    "progress": job.progress,
                      "filename":job.filename})
 
 @api_view(['GET'])
@@ -27,4 +28,4 @@ def get_job(request,job_id):
     return Response({"job_id":job.id,
                      "status":job.status,
                      "filename":job.filename,
-                     "uploaded_at":job.uploaded_at})
+                     "progress":job.progress})

@@ -4,6 +4,18 @@ function App() {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
   const [jobId, setJobId] = useState(null);
+  const [jobStatus, setJobStatus] = useState("");
+  const[progress, setProgress] = useState(0);
+  const checkJobStatus = async () => {
+    try {
+      const response = await axios.get(`http://localhost:8000/api/jobs/${id}/`);
+      setJobStatus(response.data.status);
+      setProgress(response.data.progress);
+
+    } catch (error){
+      console.error(error);
+    }
+  };
   const uploadFile = async () => {
     if (!file) {
       setMessage("Please select a file first.");
@@ -13,8 +25,12 @@ function App() {
     formData.append("file", file);
     try{
       const response = await axios.post("http://localhost:8000/api/upload/", formData, );
-      setMessage(response.data.message);
+      setMessage(`Job Created!
+        Job ID: ${response.data.job_id}
+        Status: ${response.data.status}
+        Progress: ${response.data.progress}%`);
       setJobId(response.data.job_id);
+      setJobStatus(response.data.job_id);
     }
     catch (error) {
       setMessage("Upload Failed");
