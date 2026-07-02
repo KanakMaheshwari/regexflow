@@ -19,10 +19,13 @@ def upload_file(request):
     job=create_processing_job(uploaded_file)
     # Start the background task
     process_uploaded_file.delay(job.id)
-    return Response({"job_id":job.id,
-                     "status":job.status,
-                    "progress": job.progress,
-                     "filename":job.filename})
+    return Response({
+        "message": "Upload successful.",
+        "job_id": job.id,
+        "status": job.status,
+        "filename": job.filename,
+        "progress": job.progress
+    })
 
 @api_view(['GET'])
 def get_job(request,job_id):
