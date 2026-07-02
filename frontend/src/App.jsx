@@ -92,6 +92,14 @@ function App() {
           <p><strong>Job ID:</strong> {jobId}</p>
           <p><strong>Status:</strong> {jobStatus}</p>
           <p><strong>Progress:</strong> {progress}%</p>
+          {jobStatus==="SUCCESS" && (
+            <a href={`http://localhost:8000/api/download/${jobId}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+             <button>Download Processed File</button> 
+            </a>
+          )}
         </>
       )}
 
