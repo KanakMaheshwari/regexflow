@@ -1,13 +1,16 @@
-import time
 import os
+import time
 import pandas as pd
-from celery import shared_task
 
+
+from celery import shared_task
 from .models import ProcessingJob
 
 
+
 @shared_task
-def process_uploaded_file(job_id):
+def process_uploaded_file(job_id,instruction):
+
     job = ProcessingJob.objects.get(id=job_id)
 
     try:
@@ -16,13 +19,18 @@ def process_uploaded_file(job_id):
         job.save()
 
         print(f"Started Job {job.id}")
+        print(f"Instruction: {instruction}")
 
-        file_path = os.path.join("uploads", job.filename)
+        # Get the uploaded file path
+        file_path = job.filename.path
 
-        if job.filename.endswith(".csv"):
+        # Read file
+        if file_path.endswith(".csv"):
             df = pd.read_csv(file_path)
-        elif job.filename.endswith(".xlsx"):
+
+        elif file_path.endswith(".xlsx"):
             df = pd.read_excel(file_path)
+
         else:
             job.status = "FAILED"
             job.save()
@@ -30,24 +38,40 @@ def process_uploaded_file(job_id):
 
         rows = len(df)
 
+        
         for i in range(rows):
+
             time.sleep(0.02)
 
-            job.progress = int(((i + 1) / rows) * 100)
-            job.save()
+            progress = int(((i + 1) / rows) * 100)
+
+           
+            if progress > job.progress:
+                job.progress = progress
+                job.save()
+
+        print(f"Processed {rows} rows")
+
+      
+
+        filename = os.path.basename(job.filename.name)
+
+        processed_dir = os.path.join("uploads", "processed")
+        os.makedirs(processed_dir, exist_ok=True)
 
         output_path = os.path.join(
-            "uploads",
-            f"processed_{job.filename}"
+            processed_dir,
+            f"processed_{filename}"
         )
 
-        if job.filename.endswith(".csv"):
+        if filename.endswith(".csv"):
             df.to_csv(output_path, index=False)
+
         else:
             df.to_excel(output_path, index=False)
-        job.output_file=output_path
-        # We'll add this after adding the model field
-        # job.output_file = output_path
+
+        # Save relative path in FileField
+        job.output_file.name = f"processed/processed_{filename}"
 
         job.status = "SUCCESS"
         job.progress = 100
@@ -58,6 +82,7 @@ def process_uploaded_file(job_id):
         return True
 
     except Exception as e:
+
         print(e)
 
         job.status = "FAILED"

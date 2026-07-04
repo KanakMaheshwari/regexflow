@@ -19,6 +19,7 @@ def hello(request):
 @api_view(["POST"])
 def upload_file(request):
     uploaded_file = request.FILES.get("file")
+    instruction=request.POST.get("instruction","")  
 
     if uploaded_file is None:
         return Response(
@@ -31,7 +32,7 @@ def upload_file(request):
         job = create_processing_job(uploaded_file)
 
         # Send task to Celery
-        process_uploaded_file.delay(job.id)
+        process_uploaded_file.delay(job.id,instruction)
 
         return Response({
             "message": "Upload successful.",
@@ -64,6 +65,7 @@ def get_job(request, job_id):
 
 @api_view(["GET"])
 def download_file(request, job_id):
+
     job = get_object_or_404(ProcessingJob, id=job_id)
 
     if not job.output_file:
@@ -72,14 +74,8 @@ def download_file(request, job_id):
             status=404
         )
 
-    if not os.path.exists(job.output_file):
-        return Response(
-            {"error": "Output file does not exist."},
-            status=404
-        )
-
     return FileResponse(
-        open(job.output_file, "rb"),
+        open(job.output_file.path, "rb"),
         as_attachment=True,
-        filename=os.path.basename(job.output_file)
+        filename=job.output_file.name.split("/")[-1]
     )
