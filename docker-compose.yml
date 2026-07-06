@@ -43,3 +43,23 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+  flower:
+    build: ./backend
+    container_name: flower_dashboard
+
+    command: celery -A config flower
+
+    ports:
+      - "5555:5555"
+
+    volumes:
+      - ./backend:/app
+
+    depends_on:
+      - redis
+      - celery
+
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0

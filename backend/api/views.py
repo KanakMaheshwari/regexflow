@@ -19,7 +19,9 @@ def hello(request):
 @api_view(["POST"])
 def upload_file(request):
     uploaded_file = request.FILES.get("file")
-    instruction=request.POST.get("instruction","")  
+    instruction = request.POST.get("instruction", "")
+    replacement = request.POST.get("replacement", "")
+    target_column = request.POST.get("target_column", "")
 
     if uploaded_file is None:
         return Response(
@@ -27,12 +29,21 @@ def upload_file(request):
             status=400
         )
 
+    if not instruction.strip():
+        return Response(
+            {"error": "Processing instruction is required."},
+            status=400
+        )
+
     try:
-        # Save uploaded file and create ProcessingJob
         job = create_processing_job(uploaded_file)
 
-        # Send task to Celery
-        process_uploaded_file.delay(job.id,instruction)
+        process_uploaded_file.delay(
+            job.id,
+            instruction,
+            replacement,
+            target_column
+        )
 
         return Response({
             "message": "Upload successful.",

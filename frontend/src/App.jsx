@@ -7,6 +7,9 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState("");
   const [progress, setProgress] = useState(0);
+  const [instruction, setInstruction]= useState("");
+  const [replacement, setReplacement] = useState("");
+  const [targetColumn, setTargetColumn] = useState("");
 
   // Check job status
   const checkJobStatus = async (id) => {
@@ -28,6 +31,8 @@ function App() {
     }
   };
 
+
+
   // Upload file
   const uploadFile = async () => {
     if (!file) {
@@ -37,6 +42,9 @@ function App() {
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("instruction", instruction);
+    formData.append("replacement", replacement);
+    formData.append("target_column", targetColumn);
 
     try {
       const response = await axios.post(
@@ -73,6 +81,48 @@ function App() {
       <input
         type="file"
         onChange={(e) => setFile(e.target.files[0])}
+      />
+
+      <br />
+      <br />
+      <input
+        type="text"
+        placeholder="Enter processing instruction"
+        value={instruction}
+        onChange={(e) => setInstruction(e.target.value)}
+        style={{
+          width:"400px",
+          padding:"8px",
+          marginTop:"15px"
+        }}
+      />
+
+      <br />
+      <br />
+
+      <input
+        type="text"
+        placeholder="Replacement Value"
+        value={replacement}
+        onChange={(e) => setReplacement(e.target.value)}
+        style={{
+          width: "400px",
+          padding: "8px"
+        }}
+      />
+
+      <br />
+      <br />
+
+      <input
+        type="text"
+        placeholder="Target Column (Optional)"
+        value={targetColumn}
+        onChange={(e) => setTargetColumn(e.target.value)}
+        style={{
+          width: "400px",
+          padding: "8px"
+        }}
       />
 
       <br />
