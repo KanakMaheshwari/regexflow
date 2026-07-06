@@ -9,33 +9,48 @@ MODEL_NAME = "llama3:latest"
 MAX_RETRIES = 3
 
 
-def generate_regex(prompt):
+def generate_regex(prompt, sample_values=None):
+
+    sample_values = sample_values or []
 
     previous_regex = ""
+    feedback = ""
 
     for attempt in range(MAX_RETRIES):
+
+        samples_text = "\n".join(
+            str(value) for value in sample_values[:10]
+        )
 
         llm_prompt = f"""
 You are an expert Python regular expression generator.
 
 Convert the user's natural-language request into ONE Python-compatible regular expression.
 
-Return ONLY JSON:
+Return ONLY valid JSON in exactly this format:
 
 {{"regex": "pattern"}}
 
 Rules:
-- Return valid JSON only.
+- Return JSON only.
 - Do not include markdown.
 - Do not include explanations.
 - The regex must work with Python re and pandas str.replace.
-- Do not include quotes, commas, colons, or other JSON syntax inside the regex unless required by the user's pattern.
+- Generate a regex based on the user's instruction.
+- Use the sample values only to understand the data format.
+- Do not generate a regex that matches every value unless the instruction requires it.
 
-User request:
+User instruction:
 {prompt}
 
-Previous incorrect regex:
+Sample values from the dataset:
+{samples_text}
+
+Previous failed regex:
 {previous_regex}
+
+Failure feedback:
+{feedback}
 """
 
         response = requests.post(
@@ -53,76 +68,57 @@ Previous incorrect regex:
 
         result = response.json()
 
-        generated_text = result["response"]
-
-        regex_data = json.loads(generated_text)
+        regex_data = json.loads(result["response"])
 
         if "regex" not in regex_data:
-            previous_regex = "Missing regex field"
+            feedback = "Response did not contain a regex field."
             continue
 
         regex = regex_data["regex"]
 
         if not isinstance(regex, str):
-            previous_regex = str(regex)
+            feedback = "Generated regex was not a string."
             continue
 
         try:
-            re.compile(regex)
+            compiled_regex = re.compile(regex)
 
-        except re.error:
+        except re.error as error:
             previous_regex = regex
+            feedback = f"Regex syntax error: {error}"
             continue
 
-        if validate_regex(prompt, regex):
+        if sample_values:
 
-            print(
-                f"Valid regex generated on attempt {attempt + 1}: {regex}",
-                flush=True
-            )
+            matches = [
+                value
+                for value in sample_values
+                if compiled_regex.search(str(value))
+            ]
 
-            return {
-                "regex": regex
-            }
+            if len(matches) == 0:
+                previous_regex = regex
+                feedback = (
+                    "The regex matched zero sample values. "
+                    "Generate a corrected regex."
+                )
+
+                print(
+                    f"Attempt {attempt + 1}: regex matched zero samples: {regex}",
+                    flush=True
+                )
+
+                continue
 
         print(
-            f"Regex failed validation: {regex}",
+            f"Valid regex generated on attempt {attempt + 1}: {regex}",
             flush=True
         )
 
-        previous_regex = regex
+        return {
+            "regex": regex
+        }
 
     raise ValueError(
-        "Unable to generate a valid regex after 3 attempts."
+        "Unable to generate a usable regex after 3 attempts."
     )
-
-
-def validate_regex(prompt, regex):
-
-    prompt = prompt.lower()
-
-    if "email" in prompt:
-
-        positive_examples = [
-            "john@gmail.com",
-            "sarah.jones@yahoo.com",
-            "user123@outlook.com"
-        ]
-
-        negative_examples = [
-            "not-an-email",
-            "john@gmail",
-            "@gmail.com"
-        ]
-
-        for example in positive_examples:
-
-            if not re.search(regex, example):
-                return False
-
-        for example in negative_examples:
-
-            if re.search(regex, example):
-                return False
-
-    return True
