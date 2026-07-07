@@ -13,6 +13,7 @@ from .models import ProcessingJob
 from .cache import get_cached_regex, cache_regex
 from .llm_service import generate_regex
 from .spark_service import apply_regex_with_spark
+from .regex_validator import validate_regex_safety
 
 
 SPARK_FILE_SIZE_THRESHOLD = 10 * 1024 * 1024
@@ -24,7 +25,7 @@ def process_uploaded_file(
     job_id,
     instruction,
     replacement,
-    target_column
+    target_column,
 ):
     job = ProcessingJob.objects.get(id=job_id)
 
@@ -33,27 +34,104 @@ def process_uploaded_file(
         job.progress = 0
         job.save()
 
-        print(f"\n========== JOB {job.id} ==========", flush=True)
-        print(f"Instruction: {instruction}", flush=True)
-        print(f"Replacement: {replacement}", flush=True)
-        print(f"Target Column: {target_column}", flush=True)
+        print(
+            f"\n========== JOB {job.id} ==========",
+            flush=True,
+        )
+        print(
+            f"Instruction: {instruction}",
+            flush=True,
+        )
+        print(
+            f"Replacement: {replacement}",
+            flush=True,
+        )
+        print(
+            f"Target Column: {target_column}",
+            flush=True,
+        )
 
         file_path = job.filename.path
         file_size = os.path.getsize(file_path)
 
-        print(f"Reading file: {file_path}", flush=True)
-        print(f"File size: {file_size} bytes", flush=True)
+        print(
+            f"File path: {file_path}",
+            flush=True,
+        )
+        print(
+            f"File size: {file_size} bytes",
+            flush=True,
+        )
 
-        if file_path.lower().endswith(".csv"):
+        use_spark = (
+            file_path.lower().endswith(".csv")
+            and file_size >= SPARK_FILE_SIZE_THRESHOLD
+        )
+
+        sample_values = []
+        matching_column = None
+        df = None
+
+        if use_spark:
+            print(
+                "Large CSV detected. Reading sample only.",
+                flush=True,
+            )
+
+            sample_df = pd.read_csv(
+                file_path,
+                dtype=str,
+                nrows=10,
+            )
+
+            print(
+                "Sample DataFrame:",
+                flush=True,
+            )
+            print(
+                sample_df.head(),
+                flush=True,
+            )
+
+            if target_column:
+                for column in sample_df.columns:
+                    if column.lower() == target_column.lower():
+                        matching_column = column
+                        break
+
+                if matching_column is None:
+                    raise ValueError(
+                        f"Target column '{target_column}' not found."
+                    )
+
+                sample_values = (
+                    sample_df[matching_column]
+                    .dropna()
+                    .astype(str)
+                    .head(10)
+                    .tolist()
+                )
+
+        elif file_path.lower().endswith(".csv"):
+            print(
+                "Small CSV detected. Using Pandas.",
+                flush=True,
+            )
+
             df = pd.read_csv(
                 file_path,
-                dtype=str
+                dtype=str,
             )
 
         elif file_path.lower().endswith(".xlsx"):
+            print(
+                "Excel file detected. Using Pandas.",
+                flush=True,
+            )
+
             df = pd.read_excel(
                 file_path,
-                dtype=str
+                dtype=str,
             )
 
         else:
@@ -61,65 +139,95 @@ def process_uploaded_file(
                 "Unsupported file format."
             )
 
-        print("Original DataFrame:", flush=True)
-        print(df.head(), flush=True)
+        if not use_spark:
+            print(
+                "Original DataFrame:",
+                flush=True,
+            )
+            print(
+                df.head(),
+                flush=True,
+            )
 
-        sample_values = []
-        matching_column = None
+            if target_column:
+                for column in df.columns:
+                    if column.lower() == target_column.lower():
+                        matching_column = column
+                        break
 
-        if target_column:
-            for column in df.columns:
-                if column.lower() == target_column.lower():
-                    matching_column = column
-                    break
+                if matching_column is None:
+                    raise ValueError(
+                        f"Target column '{target_column}' not found."
+                    )
 
-            if matching_column is None:
-                raise ValueError(
-                    f"Target column '{target_column}' not found."
+                sample_values = (
+                    df[matching_column]
+                    .dropna()
+                    .astype(str)
+                    .head(10)
+                    .tolist()
                 )
 
-            sample_values = (
-                df[matching_column]
-                .dropna()
-                .astype(str)
-                .head(10)
-                .tolist()
-            )
-
-            print(
-                f"Sample values: {sample_values}",
-                flush=True
-            )
+        print(
+            f"Sample values: {sample_values}",
+            flush=True,
+        )
 
         regex_data = get_cached_regex(instruction)
 
         if regex_data:
-            print(
-                "Regex loaded from Redis cache.",
-                flush=True
-            )
+            try:
+                validate_regex_safety(
+                    regex_data["regex"]
+                )
 
-        else:
+                print(
+                    "Safe regex loaded from Redis cache.",
+                    flush=True,
+                )
+
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+            ):
+                print(
+                    "Invalid or unsafe cached regex ignored.",
+                    flush=True,
+                )
+
+                regex_data = None
+
+        if not regex_data:
             print(
                 "Generating regex using Ollama...",
-                flush=True
+                flush=True,
             )
 
             regex_data = generate_regex(
                 instruction,
-                sample_values
+                sample_values,
+            )
+
+            validate_regex_safety(
+                regex_data["regex"]
             )
 
             cache_regex(
                 instruction,
-                regex_data
+                regex_data,
+            )
+
+            print(
+                "Safe regex stored in Redis cache.",
+                flush=True,
             )
 
         regex = regex_data["regex"]
 
         print(
             f"Regex: {regex}",
-            flush=True
+            flush=True,
         )
 
         filename = os.path.basename(
@@ -128,28 +236,23 @@ def process_uploaded_file(
 
         processed_dir = os.path.join(
             "uploads",
-            "processed"
+            "processed",
         )
 
         os.makedirs(
             processed_dir,
-            exist_ok=True
+            exist_ok=True,
         )
 
         output_path = os.path.join(
             processed_dir,
-            f"processed_{filename}"
-        )
-
-        use_spark = (
-            file_path.lower().endswith(".csv")
-            and file_size >= SPARK_FILE_SIZE_THRESHOLD
+            f"processed_{filename}",
         )
 
         if use_spark:
             print(
                 "Processing engine: PySpark",
-                flush=True
+                flush=True,
             )
 
             job.progress = 30
@@ -157,18 +260,20 @@ def process_uploaded_file(
 
             spark_output_dir = os.path.join(
                 processed_dir,
-                f"spark_job_{job.id}"
+                f"spark_job_{job.id}",
             )
 
             if os.path.exists(spark_output_dir):
-                shutil.rmtree(spark_output_dir)
+                shutil.rmtree(
+                    spark_output_dir
+                )
 
             apply_regex_with_spark(
                 input_path=file_path,
                 output_path=spark_output_dir,
                 regex=regex,
                 replacement=replacement,
-                target_column=target_column
+                target_column=target_column,
             )
 
             job.progress = 80
@@ -177,7 +282,7 @@ def process_uploaded_file(
             part_files = glob.glob(
                 os.path.join(
                     spark_output_dir,
-                    "part-*.csv"
+                    "part-*.csv",
                 )
             )
 
@@ -188,7 +293,7 @@ def process_uploaded_file(
 
             shutil.move(
                 part_files[0],
-                output_path
+                output_path,
             )
 
             shutil.rmtree(
@@ -198,7 +303,7 @@ def process_uploaded_file(
         else:
             print(
                 "Processing engine: Pandas",
-                flush=True
+                flush=True,
             )
 
             if target_column:
@@ -208,14 +313,16 @@ def process_uploaded_file(
                     .str.replace(
                         regex,
                         replacement,
-                        regex=True
+                        regex=True,
                     )
                 )
 
             else:
                 text_columns = (
                     df
-                    .select_dtypes(include="object")
+                    .select_dtypes(
+                        include="object"
+                    )
                     .columns
                 )
 
@@ -226,11 +333,14 @@ def process_uploaded_file(
                         .str.replace(
                             regex,
                             replacement,
-                            regex=True
+                            regex=True,
                         )
                     )
 
-            rows = max(len(df), 1)
+            rows = max(
+                len(df),
+                1,
+            )
 
             for i in range(rows):
                 progress = int(
@@ -245,51 +355,59 @@ def process_uploaded_file(
 
             print(
                 "Processed DataFrame:",
-                flush=True
+                flush=True,
             )
-
             print(
                 df.head(),
-                flush=True
+                flush=True,
             )
 
             if filename.lower().endswith(".csv"):
                 df.to_csv(
                     output_path,
-                    index=False
+                    index=False,
                 )
 
             else:
                 df.to_excel(
                     output_path,
-                    index=False
+                    index=False,
                 )
 
         print(
             f"Saving file to: {output_path}",
-            flush=True
+            flush=True,
         )
 
-        with open(output_path, "rb") as f:
+        with open(
+            output_path,
+            "rb",
+        ) as file:
             job.output_file.save(
                 f"processed_{filename}",
-                File(f),
-                save=False
+                File(file),
+                save=False,
             )
 
         job.status = "SUCCESS"
         job.progress = 100
         job.save()
 
-        print("Finished!", flush=True)
-        print("=============================\n", flush=True)
+        print(
+            "Finished!",
+            flush=True,
+        )
+        print(
+            "=============================\n",
+            flush=True,
+        )
 
         return True
 
     except requests.exceptions.RequestException as error:
         print(
             f"Ollama/network error: {error}",
-            flush=True
+            flush=True,
         )
 
         if self.request.retries >= self.max_retries:
@@ -298,33 +416,34 @@ def process_uploaded_file(
 
             print(
                 "Maximum retries reached. Job failed.",
-                flush=True
+                flush=True,
             )
 
             raise
 
         print(
-            f"Retrying task. Retry number: {self.request.retries + 1}",
-            flush=True
+            f"Retrying task. Retry number: "
+            f"{self.request.retries + 1}",
+            flush=True,
         )
 
         raise self.retry(
             exc=error,
-            countdown=2 ** self.request.retries
+            countdown=2 ** self.request.retries,
         )
 
     except Exception as error:
         print(
             "TASK FAILED",
-            flush=True
+            flush=True,
         )
 
         print(
             error,
-            flush=True
+            flush=True,
         )
 
         job.status = "FAILED"
         job.save()
 
-        return False
+        raise
