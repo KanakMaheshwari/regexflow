@@ -1,3 +1,5 @@
+import csv
+import json
 import os
 
 import pandas as pd
@@ -16,6 +18,103 @@ from .tasks import process_uploaded_file
 
 
 ALLOWED_FILE_EXTENSIONS = {".csv", ".xlsx"}
+MAX_PREVIEW_PAGE_SIZE = 100
+
+SUPPORTED_TRANSFORMATIONS = {
+    "replace",
+    "extract",
+    "mask",
+}
+
+
+def parse_target_columns(request):
+    target_columns_value = request.POST.get(
+        "target_columns",
+        ""
+    )
+
+    if target_columns_value:
+        try:
+            target_columns = json.loads(
+                target_columns_value
+            )
+
+            if not isinstance(target_columns, list):
+                raise ValueError
+
+        except (
+            json.JSONDecodeError,
+            ValueError,
+            TypeError
+        ):
+            return None
+
+    else:
+        legacy_target_column = request.POST.get(
+            "target_column",
+            ""
+        ).strip()
+
+        target_columns = (
+            [legacy_target_column]
+            if legacy_target_column
+            else []
+        )
+
+    cleaned_columns = []
+
+    for column in target_columns:
+        if not isinstance(column, str):
+            return None
+
+        cleaned_column = column.strip()
+
+        if (
+            cleaned_column
+            and cleaned_column not in cleaned_columns
+        ):
+            cleaned_columns.append(
+                cleaned_column
+            )
+
+    return cleaned_columns
+
+
+def get_csv_preview(
+    file_path,
+    page,
+    page_size
+):
+    start_row = (
+        page - 1
+    ) * page_size
+
+    end_row = start_row + page_size
+
+    rows = []
+    total_rows = 0
+
+    with open(
+        file_path,
+        "r",
+        encoding="utf-8-sig",
+        newline=""
+    ) as file:
+        reader = csv.DictReader(file)
+
+        columns = reader.fieldnames or []
+
+        for row_index, row in enumerate(reader):
+            if (
+                start_row
+                <= row_index
+                < end_row
+            ):
+                rows.append(row)
+
+            total_rows += 1
+
+    return columns, rows, total_rows
 
 
 @api_view(["GET"])
@@ -26,20 +125,135 @@ def hello(request):
 
 
 @api_view(["POST"])
+def inspect_file(request):
+    uploaded_file = request.FILES.get("file")
+
+    if uploaded_file is None:
+        return Response(
+            {
+                "error": "No file uploaded."
+            },
+            status=400
+        )
+
+    if uploaded_file.size == 0:
+        return Response(
+            {
+                "error": "Uploaded file is empty."
+            },
+            status=400
+        )
+
+    file_extension = os.path.splitext(
+        uploaded_file.name
+    )[1].lower()
+
+    if file_extension not in ALLOWED_FILE_EXTENSIONS:
+        return Response(
+            {
+                "error": (
+                    "Unsupported file format. "
+                    "Only CSV and XLSX files are supported."
+                )
+            },
+            status=400
+        )
+
+    try:
+        uploaded_file.seek(0)
+
+        if file_extension == ".csv":
+            dataframe = pd.read_csv(
+                uploaded_file,
+                dtype=str,
+                nrows=10
+            ).fillna("")
+
+        else:
+            dataframe = pd.read_excel(
+                uploaded_file,
+                dtype=str,
+                nrows=10
+            ).fillna("")
+
+        columns = dataframe.columns.tolist()
+
+        if not columns:
+            return Response(
+                {
+                    "error": "Dataset contains no columns."
+                },
+                status=400
+            )
+
+        return Response({
+            "columns": columns,
+            "rows": dataframe.to_dict(
+                orient="records"
+            )
+        })
+
+    except UnicodeDecodeError:
+        return Response(
+            {
+                "error": (
+                    "Unable to decode CSV file. "
+                    "Please upload a UTF-8 encoded CSV file."
+                )
+            },
+            status=400
+        )
+
+    except (
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError
+    ) as error:
+        return Response(
+            {
+                "error": (
+                    f"Unable to read uploaded file: "
+                    f"{error}"
+                )
+            },
+            status=400
+        )
+
+    except Exception as error:
+        print(
+            error,
+            flush=True
+        )
+
+        return Response(
+            {
+                "error": str(error)
+            },
+            status=500
+        )
+
+
+@api_view(["POST"])
 def upload_file(request):
     uploaded_file = request.FILES.get("file")
+
     instruction = request.POST.get(
         "instruction",
         ""
     ).strip()
+
     replacement = request.POST.get(
         "replacement",
         ""
     )
-    target_column = request.POST.get(
-        "target_column",
-        ""
-    ).strip()
+
+    transformation_type = request.POST.get(
+        "transformation_type",
+        "replace"
+    ).strip().lower()
+
+    target_columns = parse_target_columns(
+        request
+    )
 
     if uploaded_file is None:
         return Response(
@@ -75,23 +289,59 @@ def upload_file(request):
     if not instruction:
         return Response(
             {
-                "error": "Processing instruction is required."
+                "error": (
+                    "Processing instruction is required."
+                )
             },
             status=400
         )
 
-    if not replacement.strip():
+    if (
+        transformation_type
+        not in SUPPORTED_TRANSFORMATIONS
+    ):
         return Response(
             {
-                "error": "Replacement value is required."
+                "error": (
+                    "Transformation type must be "
+                    "replace, extract, or mask."
+                )
             },
             status=400
         )
 
-    if not target_column:
+    if (
+        transformation_type == "replace"
+        and not replacement.strip()
+    ):
         return Response(
             {
-                "error": "Target column is required."
+                "error": (
+                    "Replacement value is required "
+                    "for replace transformation."
+                )
+            },
+            status=400
+        )
+
+    if target_columns is None:
+        return Response(
+            {
+                "error": (
+                    "Target columns must be "
+                    "a valid JSON array of strings."
+                )
+            },
+            status=400
+        )
+
+    if not target_columns:
+        return Response(
+            {
+                "error": (
+                    "At least one target column "
+                    "is required."
+                )
             },
             status=400
         )
@@ -105,11 +355,15 @@ def upload_file(request):
             job.id,
             instruction,
             replacement,
-            target_column
+            target_columns,
+            transformation_type
         )
 
         job.task_id = task.id
-        job.save()
+
+        job.save(
+            update_fields=["task_id"]
+        )
 
         return Response({
             "message": "Upload successful.",
@@ -117,7 +371,9 @@ def upload_file(request):
             "task_id": job.task_id,
             "status": job.status,
             "filename": str(job.filename),
-            "progress": job.progress
+            "progress": job.progress,
+            "target_columns": target_columns,
+            "transformation_type": transformation_type
         })
 
     except Exception as error:
@@ -160,7 +416,10 @@ def download_file(request, job_id):
     if job.status != "SUCCESS":
         return Response(
             {
-                "error": "File processing is not complete."
+                "error": (
+                    "File processing "
+                    "is not complete."
+                )
             },
             status=400
         )
@@ -168,7 +427,9 @@ def download_file(request, job_id):
     if not job.output_file:
         return Response(
             {
-                "error": "Processed file not found."
+                "error": (
+                    "Processed file not found."
+                )
             },
             status=404
         )
@@ -178,7 +439,9 @@ def download_file(request, job_id):
     ):
         return Response(
             {
-                "error": "Processed file does not exist."
+                "error": (
+                    "Processed file does not exist."
+                )
             },
             status=404
         )
@@ -224,10 +487,15 @@ def cancel_job(request, job_id):
         )
 
     job.status = "CANCELLED"
-    job.save()
+
+    job.save(
+        update_fields=["status"]
+    )
 
     return Response({
-        "message": "Job cancelled successfully.",
+        "message": (
+            "Job cancelled successfully."
+        ),
         "job_id": job.id,
         "status": job.status
     })
@@ -269,12 +537,17 @@ def preview_file(request, job_id):
     if page < 1:
         return Response(
             {
-                "error": "Page must be at least 1."
+                "error": (
+                    "Page must be at least 1."
+                )
             },
             status=400
         )
 
-    if page_size < 1 or page_size > 100:
+    if (
+        page_size < 1
+        or page_size > MAX_PREVIEW_PAGE_SIZE
+    ):
         return Response(
             {
                 "error": (
@@ -288,7 +561,9 @@ def preview_file(request, job_id):
     if not job.filename:
         return Response(
             {
-                "error": "Uploaded file not found."
+                "error": (
+                    "Uploaded file not found."
+                )
             },
             status=404
         )
@@ -298,35 +573,58 @@ def preview_file(request, job_id):
     if not os.path.exists(file_path):
         return Response(
             {
-                "error": "Uploaded file does not exist."
+                "error": (
+                    "Uploaded file does not exist."
+                )
             },
             status=404
         )
 
     try:
         if file_path.lower().endswith(".csv"):
-            df = pd.read_csv(
+            (
+                columns,
+                rows,
+                total_rows
+            ) = get_csv_preview(
+                file_path,
+                page,
+                page_size
+            )
+
+        elif file_path.lower().endswith(".xlsx"):
+            dataframe = pd.read_excel(
                 file_path,
                 dtype=str
             )
 
-        elif file_path.lower().endswith(".xlsx"):
-            df = pd.read_excel(
-                file_path,
-                dtype=str
+            dataframe = dataframe.fillna("")
+
+            columns = dataframe.columns.tolist()
+
+            total_rows = len(dataframe)
+
+            start = (
+                page - 1
+            ) * page_size
+
+            end = start + page_size
+
+            rows = (
+                dataframe
+                .iloc[start:end]
+                .to_dict(orient="records")
             )
 
         else:
             return Response(
                 {
-                    "error": "Unsupported file format."
+                    "error": (
+                        "Unsupported file format."
+                    )
                 },
                 status=400
             )
-
-        df = df.fillna("")
-
-        total_rows = len(df)
 
         total_pages = max(
             1,
@@ -341,32 +639,34 @@ def preview_file(request, job_id):
         if page > total_pages:
             return Response(
                 {
-                    "error": "Invalid page number."
+                    "error": (
+                        "Invalid page number."
+                    )
                 },
                 status=400
             )
 
-        start = (
-            page - 1
-        ) * page_size
-
-        end = start + page_size
-
-        preview_df = df.iloc[
-            start:end
-        ]
-
         return Response({
             "job_id": job.id,
-            "columns": df.columns.tolist(),
-            "rows": preview_df.to_dict(
-                orient="records"
-            ),
+            "columns": columns,
+            "rows": rows,
             "page": page,
             "page_size": page_size,
             "total_rows": total_rows,
             "total_pages": total_pages
         })
+
+    except UnicodeDecodeError:
+        return Response(
+            {
+                "error": (
+                    "Unable to decode CSV file. "
+                    "Please upload a UTF-8 "
+                    "encoded CSV file."
+                )
+            },
+            status=400
+        )
 
     except (
         pd.errors.EmptyDataError,
@@ -375,8 +675,8 @@ def preview_file(request, job_id):
         return Response(
             {
                 "error": (
-                    f"Unable to read uploaded file: "
-                    f"{error}"
+                    f"Unable to read "
+                    f"uploaded file: {error}"
                 )
             },
             status=400

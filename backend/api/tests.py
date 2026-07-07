@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,7 @@ from django.test import TestCase
 
 from .models import ProcessingJob
 from .regex_validator import validate_regex_safety
+from .tasks import apply_pandas_transformation
 
 
 class RegexSafetyValidatorTests(TestCase):
@@ -66,6 +68,134 @@ class ProcessingJobModelTests(TestCase):
         self.assertEqual(job.progress, 0)
 
 
+class PandasTransformationTests(TestCase):
+
+    def setUp(self):
+        self.dataframe = pd.DataFrame(
+            {
+                "Email": [
+                    "kanak@example.com",
+                    "alex@example.com",
+                    "invalid-value",
+                ],
+                "Backup_Email": [
+                    "backup1@example.com",
+                    "backup2@example.com",
+                    "another-invalid-value",
+                ],
+            }
+        )
+
+        self.email_regex = (
+            r"[A-Za-z0-9._%+-]+@"
+            r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+        )
+
+    def test_replace_transformation(self):
+        result = apply_pandas_transformation(
+            dataframe=self.dataframe.copy(),
+            matching_columns=["Email"],
+            regex=self.email_regex,
+            replacement="REDACTED",
+            transformation_type="replace",
+        )
+
+        self.assertEqual(
+            result.loc[0, "Email"],
+            "REDACTED",
+        )
+
+        self.assertEqual(
+            result.loc[1, "Email"],
+            "REDACTED",
+        )
+
+        self.assertEqual(
+            result.loc[2, "Email"],
+            "invalid-value",
+        )
+
+    def test_extract_transformation(self):
+        result = apply_pandas_transformation(
+            dataframe=self.dataframe.copy(),
+            matching_columns=["Email"],
+            regex=self.email_regex,
+            replacement="",
+            transformation_type="extract",
+        )
+
+        self.assertEqual(
+            result.loc[0, "Email"],
+            "kanak@example.com",
+        )
+
+        self.assertEqual(
+            result.loc[1, "Email"],
+            "alex@example.com",
+        )
+
+        self.assertEqual(
+            result.loc[2, "Email"],
+            "",
+        )
+
+    def test_mask_transformation(self):
+        result = apply_pandas_transformation(
+            dataframe=self.dataframe.copy(),
+            matching_columns=["Email"],
+            regex=self.email_regex,
+            replacement="",
+            transformation_type="mask",
+        )
+
+        self.assertEqual(
+            result.loc[0, "Email"],
+            "********",
+        )
+
+        self.assertEqual(
+            result.loc[1, "Email"],
+            "********",
+        )
+
+        self.assertEqual(
+            result.loc[2, "Email"],
+            "invalid-value",
+        )
+
+    def test_transformation_applies_to_multiple_columns(self):
+        result = apply_pandas_transformation(
+            dataframe=self.dataframe.copy(),
+            matching_columns=[
+                "Email",
+                "Backup_Email",
+            ],
+            regex=self.email_regex,
+            replacement="REDACTED",
+            transformation_type="replace",
+        )
+
+        self.assertEqual(
+            result.loc[0, "Email"],
+            "REDACTED",
+        )
+
+        self.assertEqual(
+            result.loc[0, "Backup_Email"],
+            "REDACTED",
+        )
+
+    def test_invalid_transformation_type_raises_error(self):
+        with self.assertRaises(ValueError):
+            apply_pandas_transformation(
+                dataframe=self.dataframe.copy(),
+                matching_columns=["Email"],
+                regex=self.email_regex,
+                replacement="",
+                transformation_type="invalid",
+            )
+
+
 class JobStatusAPITests(TestCase):
 
     def setUp(self):
@@ -99,6 +229,133 @@ class JobStatusAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+
+class InspectFileAPITests(TestCase):
+
+    def test_inspect_csv_returns_columns_and_rows(self):
+        uploaded_file = SimpleUploadedFile(
+            "inspect.csv",
+            (
+                b"Name,Email,Employee_ID\n"
+                b"Kanak,kanak@example.com,EMP-1001\n"
+                b"Alex,alex@example.com,EMP-1002\n"
+            ),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/inspect/",
+            {
+                "file": uploaded_file,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        self.assertEqual(
+            data["columns"],
+            [
+                "Name",
+                "Email",
+                "Employee_ID",
+            ],
+        )
+
+        self.assertEqual(len(data["rows"]), 2)
+
+        self.assertEqual(
+            data["rows"][0]["Name"],
+            "Kanak",
+        )
+
+    def test_inspect_returns_maximum_ten_rows(self):
+        csv_content = "Name,Email\n"
+
+        for number in range(1, 21):
+            csv_content += (
+                f"User {number},"
+                f"user{number}@example.com\n"
+            )
+
+        uploaded_file = SimpleUploadedFile(
+            "inspect_large.csv",
+            csv_content.encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/inspect/",
+            {
+                "file": uploaded_file,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(
+            len(response.json()["rows"]),
+            10,
+        )
+
+    def test_inspect_missing_file_returns_400(self):
+        response = self.client.post(
+            "/api/inspect/"
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "No file uploaded.",
+        )
+
+    def test_inspect_empty_file_returns_400(self):
+        uploaded_file = SimpleUploadedFile(
+            "empty.csv",
+            b"",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/inspect/",
+            {
+                "file": uploaded_file,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Uploaded file is empty.",
+        )
+
+    def test_inspect_unsupported_file_returns_400(self):
+        uploaded_file = SimpleUploadedFile(
+            "document.txt",
+            b"Some text",
+            content_type="text/plain",
+        )
+
+        response = self.client.post(
+            "/api/inspect/",
+            {
+                "file": uploaded_file,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            (
+                "Unsupported file format. "
+                "Only CSV and XLSX files are supported."
+            ),
+        )
 
 
 class PreviewPaginationTests(TestCase):
@@ -311,28 +568,274 @@ class UploadAPITests(TestCase):
 
         data = response.json()
 
-        self.assertIn("job_id", data)
-
-        self.assertEqual(
-            data["task_id"],
-            "test-celery-task-id",
-        )
-
         job = ProcessingJob.objects.get(
             id=data["job_id"]
-        )
-
-        self.assertEqual(
-            job.task_id,
-            "test-celery-task-id",
         )
 
         mock_delay.assert_called_once_with(
             job.id,
             "Find employee IDs",
             "XXXX",
-            "Employee_ID",
+            ["Employee_ID"],
+            "replace",
         )
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_multiple_target_columns_dispatches_celery_task(
+        self,
+        mock_delay,
+    ):
+        mock_task = MagicMock()
+        mock_task.id = "multiple-columns-task-id"
+        mock_delay.return_value = mock_task
+
+        uploaded_file = SimpleUploadedFile(
+            "employees.csv",
+            (
+                b"Name,Email,Backup_Email\n"
+                b"Kanak,kanak@example.com,"
+                b"backup@example.com\n"
+            ),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_columns": json.dumps(
+                    [
+                        "Email",
+                        "Backup_Email",
+                    ]
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        job = ProcessingJob.objects.get(
+            id=data["job_id"]
+        )
+
+        self.assertEqual(
+            data["target_columns"],
+            [
+                "Email",
+                "Backup_Email",
+            ],
+        )
+
+        self.assertEqual(
+            data["transformation_type"],
+            "replace",
+        )
+
+        mock_delay.assert_called_once_with(
+            job.id,
+            "Find email addresses",
+            "REDACTED",
+            [
+                "Email",
+                "Backup_Email",
+            ],
+            "replace",
+        )
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_extract_transformation_dispatches_task(
+        self,
+        mock_delay,
+    ):
+        mock_task = MagicMock()
+        mock_task.id = "extract-task-id"
+        mock_delay.return_value = mock_task
+
+        uploaded_file = SimpleUploadedFile(
+            "extract.csv",
+            b"Text\nContact user@example.com today\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "",
+                "target_columns": json.dumps(["Text"]),
+                "transformation_type": "extract",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        job = ProcessingJob.objects.get(
+            id=data["job_id"]
+        )
+
+        self.assertEqual(
+            data["transformation_type"],
+            "extract",
+        )
+
+        mock_delay.assert_called_once_with(
+            job.id,
+            "Find email addresses",
+            "",
+            ["Text"],
+            "extract",
+        )
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_mask_transformation_dispatches_task(
+        self,
+        mock_delay,
+    ):
+        mock_task = MagicMock()
+        mock_task.id = "mask-task-id"
+        mock_delay.return_value = mock_task
+
+        uploaded_file = SimpleUploadedFile(
+            "mask.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "",
+                "target_columns": json.dumps(["Email"]),
+                "transformation_type": "mask",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        job = ProcessingJob.objects.get(
+            id=data["job_id"]
+        )
+
+        self.assertEqual(
+            data["transformation_type"],
+            "mask",
+        )
+
+        mock_delay.assert_called_once_with(
+            job.id,
+            "Find email addresses",
+            "",
+            ["Email"],
+            "mask",
+        )
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_invalid_transformation_type_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "invalid.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "",
+                "target_columns": json.dumps(["Email"]),
+                "transformation_type": "invalid",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            (
+                "Transformation type must be "
+                "replace, extract, or mask."
+            ),
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_invalid_target_columns_json_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "employees.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_columns": "invalid-json",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            (
+                "Target columns must be "
+                "a valid JSON array of strings."
+            ),
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_empty_target_columns_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "employees.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_columns": json.dumps([]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "At least one target column is required.",
+        )
+
+        mock_delay.assert_not_called()
 
     @patch("api.views.process_uploaded_file.delay")
     def test_upload_creates_processing_job(
@@ -502,7 +1005,10 @@ class UploadAPITests(TestCase):
 
         self.assertEqual(
             response.json()["error"],
-            "Replacement value is required.",
+            (
+                "Replacement value is required "
+                "for replace transformation."
+            ),
         )
 
         mock_delay.assert_not_called()
@@ -532,7 +1038,7 @@ class UploadAPITests(TestCase):
 
         self.assertEqual(
             response.json()["error"],
-            "Target column is required.",
+            "At least one target column is required.",
         )
 
         mock_delay.assert_not_called()

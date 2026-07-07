@@ -1,8 +1,7 @@
 import os
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace
-from pyspark.sql.types import StringType
+from pyspark.sql.functions import col, regexp_extract, regexp_replace
 
 
 DEFAULT_SPARK_PARTITIONS = 4
@@ -31,7 +30,6 @@ def get_spark_session():
 
 def calculate_partition_count(file_path):
     file_size = os.path.getsize(file_path)
-
     megabyte = 1024 * 1024
 
     if file_size < 50 * megabyte:
@@ -46,12 +44,138 @@ def calculate_partition_count(file_path):
     return 32
 
 
+def find_matching_columns(
+    dataframe_columns,
+    target_columns
+):
+    column_lookup = {
+        column.lower(): column
+        for column in dataframe_columns
+    }
+
+    matching_columns = []
+    missing_columns = []
+
+    for target_column in target_columns:
+        matching_column = column_lookup.get(
+            target_column.lower()
+        )
+
+        if matching_column is None:
+            missing_columns.append(
+                target_column
+            )
+        else:
+            matching_columns.append(
+                matching_column
+            )
+
+    if missing_columns:
+        raise ValueError(
+            "Target column(s) not found: "
+            + ", ".join(missing_columns)
+        )
+
+    return matching_columns
+
+
+def apply_replace_transformation(
+    dataframe,
+    matching_columns,
+    regex,
+    replacement
+):
+    for matching_column in matching_columns:
+        dataframe = dataframe.withColumn(
+            matching_column,
+            regexp_replace(
+                col(matching_column),
+                regex,
+                replacement
+            )
+        )
+
+    return dataframe
+
+
+def apply_extract_transformation(
+    dataframe,
+    matching_columns,
+    regex
+):
+    for matching_column in matching_columns:
+        dataframe = dataframe.withColumn(
+            matching_column,
+            regexp_extract(
+                col(matching_column),
+                regex,
+                0
+            )
+        )
+
+    return dataframe
+
+
+def apply_mask_transformation(
+    dataframe,
+    matching_columns,
+    regex
+):
+    for matching_column in matching_columns:
+        dataframe = dataframe.withColumn(
+            matching_column,
+            regexp_replace(
+                col(matching_column),
+                regex,
+                "********"
+            )
+        )
+
+    return dataframe
+
+
+def apply_transformation(
+    dataframe,
+    matching_columns,
+    regex,
+    replacement,
+    transformation_type
+):
+    if transformation_type == "replace":
+        return apply_replace_transformation(
+            dataframe,
+            matching_columns,
+            regex,
+            replacement
+        )
+
+    if transformation_type == "extract":
+        return apply_extract_transformation(
+            dataframe,
+            matching_columns,
+            regex
+        )
+
+    if transformation_type == "mask":
+        return apply_mask_transformation(
+            dataframe,
+            matching_columns,
+            regex
+        )
+
+    raise ValueError(
+        f"Unsupported transformation type: "
+        f"{transformation_type}"
+    )
+
+
 def apply_regex_with_spark(
     input_path,
     output_path,
     regex,
     replacement,
-    target_column=None
+    target_columns,
+    transformation_type="replace"
 ):
     spark = get_spark_session()
 
@@ -61,65 +185,55 @@ def apply_regex_with_spark(
         )
 
         print(
-            f"Spark partition count: {partition_count}",
+            f"Spark partition count: "
+            f"{partition_count}",
             flush=True
         )
 
-        df = (
+        dataframe = (
             spark.read
             .option("header", True)
             .option("inferSchema", False)
             .csv(input_path)
         )
 
-        df = df.repartition(partition_count)
+        dataframe = dataframe.repartition(
+            partition_count
+        )
 
         print(
             f"Spark DataFrame partitions: "
-            f"{df.rdd.getNumPartitions()}",
+            f"{dataframe.rdd.getNumPartitions()}",
             flush=True
         )
 
-        if target_column:
-            matching_column = None
+        matching_columns = find_matching_columns(
+            dataframe.columns,
+            target_columns
+        )
 
-            for column in df.columns:
-                if column.lower() == target_column.lower():
-                    matching_column = column
-                    break
+        print(
+            f"Spark target columns: "
+            f"{matching_columns}",
+            flush=True
+        )
 
-            if matching_column is None:
-                raise ValueError(
-                    f"Target column "
-                    f"'{target_column}' not found."
-                )
+        print(
+            f"Transformation type: "
+            f"{transformation_type}",
+            flush=True
+        )
 
-            df = df.withColumn(
-                matching_column,
-                regexp_replace(
-                    col(matching_column),
-                    regex,
-                    replacement
-                )
-            )
-
-        else:
-            for field in df.schema.fields:
-                if isinstance(
-                    field.dataType,
-                    StringType
-                ):
-                    df = df.withColumn(
-                        field.name,
-                        regexp_replace(
-                            col(field.name),
-                            regex,
-                            replacement
-                        )
-                    )
+        dataframe = apply_transformation(
+            dataframe=dataframe,
+            matching_columns=matching_columns,
+            regex=regex,
+            replacement=replacement,
+            transformation_type=transformation_type
+        )
 
         (
-            df
+            dataframe
             .write
             .mode("overwrite")
             .option("header", True)

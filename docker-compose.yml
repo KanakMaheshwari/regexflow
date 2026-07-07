@@ -1,5 +1,22 @@
 services:
 
+  frontend:
+    build: ./frontend
+    container_name: react_frontend
+
+    command: npm run dev -- --host 0.0.0.0
+
+    ports:
+      - "5173:5173"
+
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+    depends_on:
+      - django
+
+
   django:
     build: ./backend
     container_name: django_backend
@@ -19,17 +36,17 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
 
+
   redis:
     image: redis:7-alpine
-
     container_name: redis_server
 
     ports:
       - "6379:6379"
 
+
   celery:
     build: ./backend
-
     container_name: celery_worker
 
     command: celery -A config worker --loglevel=info
@@ -43,6 +60,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
 
   flower:
     build: ./backend
