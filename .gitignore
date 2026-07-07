@@ -22,3 +22,28 @@ node_modules/
 
 # Build
 dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Virtual environments
+venv/
+.venv/
+env/
+Scripts/
+pyvenv.cfg
+
+# Uploaded and processed files
+backend/uploads/
+
+# Generated test datasets
+large_test_data.csv
+
+# Environment variables
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
