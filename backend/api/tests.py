@@ -1,6 +1,6 @@
 import os
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
@@ -14,7 +14,10 @@ from .regex_validator import validate_regex_safety
 class RegexSafetyValidatorTests(TestCase):
 
     def test_valid_email_regex(self):
-        regex = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+        regex = (
+            r"[A-Za-z0-9._%+-]+@"
+            r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+        )
 
         result = validate_regex_safety(regex)
 
@@ -203,6 +206,76 @@ class PreviewPaginationTests(TestCase):
             ],
         )
 
+    def test_invalid_preview_page(self):
+        response = self.client.get(
+            f"/api/jobs/{self.job.id}/preview/",
+            {
+                "page": 5,
+                "page_size": 10,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Invalid page number.",
+        )
+
+    def test_preview_page_below_one(self):
+        response = self.client.get(
+            f"/api/jobs/{self.job.id}/preview/",
+            {
+                "page": 0,
+                "page_size": 10,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Page must be at least 1.",
+        )
+
+    def test_invalid_preview_page_format(self):
+        response = self.client.get(
+            f"/api/jobs/{self.job.id}/preview/",
+            {
+                "page": "invalid",
+                "page_size": 10,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Page and page size must be valid integers.",
+        )
+
+    def test_preview_page_size_below_one(self):
+        response = self.client.get(
+            f"/api/jobs/{self.job.id}/preview/",
+            {
+                "page": 1,
+                "page_size": 0,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_preview_page_size_above_limit(self):
+        response = self.client.get(
+            f"/api/jobs/{self.job.id}/preview/",
+            {
+                "page": 1,
+                "page_size": 101,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
 
 class UploadAPITests(TestCase):
 
@@ -338,6 +411,129 @@ class UploadAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_empty_file_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "empty.csv",
+            b"",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_column": "Email",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Uploaded file is empty.",
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_unsupported_file_format_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "document.txt",
+            b"Some text data",
+            content_type="text/plain",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_column": "Email",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            (
+                "Unsupported file format. "
+                "Only CSV and XLSX files are supported."
+            ),
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_missing_replacement_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "employees.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "",
+                "target_column": "Email",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Replacement value is required.",
+        )
+
+        mock_delay.assert_not_called()
+
+    @patch("api.views.process_uploaded_file.delay")
+    def test_missing_target_column_returns_400(
+        self,
+        mock_delay,
+    ):
+        uploaded_file = SimpleUploadedFile(
+            "employees.csv",
+            b"Email\nuser@example.com\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            "/api/upload/",
+            {
+                "file": uploaded_file,
+                "instruction": "Find email addresses",
+                "replacement": "REDACTED",
+                "target_column": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.json()["error"],
+            "Target column is required.",
+        )
 
         mock_delay.assert_not_called()
 
