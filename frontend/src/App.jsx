@@ -25,9 +25,12 @@ function App() {
   const [previewPage, setPreviewPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
+  const [previewType, setPreviewType] = useState("original");
 
   const [isInspecting, setIsInspecting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoadingPreview, setIsLoadingPreview] =
+    useState(false);
 
   const pollingIntervalRef = useRef(null);
 
@@ -46,6 +49,46 @@ function App() {
     }
   };
 
+  const fetchPreview = async (id, page = 1) => {
+    try {
+      setIsLoadingPreview(true);
+
+      const response = await axios.get(
+        `${API_BASE_URL}/jobs/${id}/preview/`,
+        {
+          params: {
+            page,
+            page_size: 10,
+          },
+        }
+      );
+
+      setPreviewColumns(response.data.columns);
+      setPreviewRows(response.data.rows);
+
+      setPreviewPage(response.data.page);
+      setTotalPages(response.data.total_pages);
+      setTotalRows(response.data.total_rows);
+
+      setPreviewType(
+        response.data.preview_type || "original"
+      );
+
+      return response.data;
+    } catch (error) {
+      console.error(error);
+
+      setMessage(
+        error.response?.data?.error ||
+          "Unable to load file preview."
+      );
+
+      return null;
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
   const checkJobStatus = async (id) => {
     try {
       const response = await axios.get(
@@ -58,51 +101,42 @@ function App() {
       setProgress(response.data.progress);
 
       if (status === "SUCCESS") {
-        setMessage("Processing completed successfully.");
+        stopPolling();
+
+        setMessage(
+          "Processing completed. Loading processed data..."
+        );
+
+        const previewData = await fetchPreview(id, 1);
+
+        if (previewData) {
+          setMessage(
+            "Processing completed successfully. Processed data is ready."
+          );
+        }
+
+        return status;
       }
 
       if (status === "FAILED") {
+        stopPolling();
         setMessage("Processing failed.");
       }
 
       if (status === "CANCELLED") {
+        stopPolling();
         setMessage("Job cancelled.");
       }
 
       return status;
     } catch (error) {
       console.error(error);
+
+      stopPolling();
+
       setMessage("Unable to check job status.");
+
       return "ERROR";
-    }
-  };
-
-  const fetchPreview = async (id, page = 1) => {
-    try {
-      const response = await axios.get(
-        `${API_BASE_URL}/jobs/${id}/preview/`,
-        {
-          params: {
-            page,
-            page_size: 10,
-          },
-        }
-      );
-
-      setPreviewColumns(response.data.columns);
-      setAvailableColumns(response.data.columns);
-      setPreviewRows(response.data.rows);
-
-      setPreviewPage(response.data.page);
-      setTotalPages(response.data.total_pages);
-      setTotalRows(response.data.total_rows);
-    } catch (error) {
-      console.error(error);
-
-      setMessage(
-        error.response?.data?.error ||
-          "Unable to load file preview."
-      );
     }
   };
 
@@ -126,12 +160,14 @@ function App() {
       );
 
       setAvailableColumns(response.data.columns);
+
       setPreviewColumns(response.data.columns);
       setPreviewRows(response.data.rows);
 
       setPreviewPage(1);
       setTotalPages(1);
       setTotalRows(response.data.rows.length);
+      setPreviewType("original");
 
       setTargetColumns([]);
 
@@ -211,6 +247,7 @@ function App() {
       setMessage("Uploading dataset...");
       setProgress(0);
       setJobStatus("");
+      setPreviewType("original");
 
       const response = await axios.post(
         `${API_BASE_URL}/upload/`,
@@ -229,16 +266,7 @@ function App() {
 
       pollingIntervalRef.current = setInterval(
         async () => {
-          const status = await checkJobStatus(id);
-
-          if (
-            status === "SUCCESS" ||
-            status === "FAILED" ||
-            status === "CANCELLED" ||
-            status === "ERROR"
-          ) {
-            stopPolling();
-          }
+          await checkJobStatus(id);
         },
         2000
       );
@@ -300,9 +328,11 @@ function App() {
     setPreviewPage(1);
     setTotalPages(0);
     setTotalRows(0);
+    setPreviewType("original");
 
     setIsInspecting(false);
     setIsUploading(false);
+    setIsLoadingPreview(false);
 
     const fileInput = document.getElementById("fileInput");
 
@@ -331,6 +361,7 @@ function App() {
     setPreviewPage(1);
     setTotalPages(0);
     setTotalRows(0);
+    setPreviewType("original");
   };
 
   const handleTransformationChange = (event) => {
@@ -362,6 +393,9 @@ function App() {
   const isJobActive =
     jobStatus === "QUEUED" ||
     jobStatus === "RUNNING";
+
+  const isProcessedPreview =
+    previewType === "processed";
 
   return (
     <div className="app">
@@ -624,10 +658,16 @@ function App() {
           <section className="card">
             <div className="section-heading">
               <div>
-                <h2>Dataset Preview</h2>
+                <h2>
+                  {isProcessedPreview
+                    ? "Processed Data Preview"
+                    : "Dataset Preview"}
+                </h2>
 
                 <p>
-                  Previewing uploaded dataset records.
+                  {isProcessedPreview
+                    ? "Previewing transformed dataset records."
+                    : "Previewing original uploaded dataset records."}
                 </p>
               </div>
 
@@ -637,6 +677,12 @@ function App() {
                 </span>
               )}
             </div>
+
+            {isLoadingPreview && (
+              <div className="message">
+                Loading preview...
+              </div>
+            )}
 
             <div className="table-container">
               <table>
@@ -673,7 +719,10 @@ function App() {
                       previewPage - 1
                     )
                   }
-                  disabled={previewPage <= 1}
+                  disabled={
+                    previewPage <= 1 ||
+                    isLoadingPreview
+                  }
                 >
                   Previous
                 </button>
@@ -689,7 +738,10 @@ function App() {
                       previewPage + 1
                     )
                   }
-                  disabled={previewPage >= totalPages}
+                  disabled={
+                    previewPage >= totalPages ||
+                    isLoadingPreview
+                  }
                 >
                   Next
                 </button>

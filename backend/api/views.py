@@ -558,23 +558,32 @@ def preview_file(request, job_id):
             status=400
         )
 
-    if not job.filename:
-        return Response(
-            {
-                "error": (
-                    "Uploaded file not found."
-                )
-            },
-            status=404
-        )
+    if (
+        job.status == "SUCCESS"
+        and job.output_file
+    ):
+        file_path = job.output_file.path
+        preview_type = "processed"
 
-    file_path = job.filename.path
+    else:
+        if not job.filename:
+            return Response(
+                {
+                    "error": (
+                        "Uploaded file not found."
+                    )
+                },
+                status=404
+            )
+
+        file_path = job.filename.path
+        preview_type = "original"
 
     if not os.path.exists(file_path):
         return Response(
             {
                 "error": (
-                    "Uploaded file does not exist."
+                    "Preview file does not exist."
                 )
             },
             status=404
@@ -648,6 +657,7 @@ def preview_file(request, job_id):
 
         return Response({
             "job_id": job.id,
+            "preview_type": preview_type,
             "columns": columns,
             "rows": rows,
             "page": page,
@@ -676,7 +686,7 @@ def preview_file(request, job_id):
             {
                 "error": (
                     f"Unable to read "
-                    f"uploaded file: {error}"
+                    f"preview file: {error}"
                 )
             },
             status=400

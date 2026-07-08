@@ -3,10 +3,15 @@ import os
 import shutil
 
 import pandas as pd
-import requests
 
 from celery import shared_task
 from django.core.files.base import File
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from .cache import cache_regex, get_cached_regex
 from .llm_service import generate_regex
@@ -359,7 +364,7 @@ def process_uploaded_file(
             )
 
             print(
-                "Generating regex using Ollama...",
+                "Generating regex using OpenAI...",
                 flush=True
             )
 
@@ -585,33 +590,62 @@ def process_uploaded_file(
 
         return True
 
-    except requests.exceptions.RequestException as error:
+    except (
+        APIConnectionError,
+        APITimeoutError,
+        RateLimitError,
+        InternalServerError,
+    ) as error:
         print(
-            f"Ollama/network error: {error}",
+            f"OpenAI API/network error: {error}",
             flush=True
         )
 
         if self.request.retries >= self.max_retries:
             job.status = "FAILED"
-            job.save(update_fields=["status"])
+
+            job.save(
+                update_fields=["status"]
+            )
+
+            print(
+                "Maximum OpenAI retry attempts exhausted.",
+                flush=True
+            )
+
             raise
 
+        retry_number = self.request.retries + 1
+
+        retry_delay = 2 ** self.request.retries
+
         print(
-            f"Retrying task. Retry number: "
-            f"{self.request.retries + 1}",
+            f"Retrying task. "
+            f"Retry number: {retry_number}. "
+            f"Retry delay: {retry_delay} seconds.",
             flush=True
         )
 
         raise self.retry(
             exc=error,
-            countdown=2 ** self.request.retries
+            countdown=retry_delay
         )
 
     except Exception as error:
-        print("TASK FAILED", flush=True)
-        print(error, flush=True)
+        print(
+            "TASK FAILED",
+            flush=True
+        )
+
+        print(
+            error,
+            flush=True
+        )
 
         job.status = "FAILED"
-        job.save(update_fields=["status"])
+
+        job.save(
+            update_fields=["status"]
+        )
 
         raise
