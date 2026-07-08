@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API_BASE_URL = "http://localhost:8000/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:8000/api";
 
 function App() {
   const [file, setFile] = useState(null);
@@ -14,6 +16,7 @@ function App() {
 
   const [instruction, setInstruction] = useState("");
   const [replacement, setReplacement] = useState("");
+
   const [transformationType, setTransformationType] =
     useState("replace");
 
@@ -45,6 +48,7 @@ function App() {
   const stopPolling = () => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
+
       pollingIntervalRef.current = null;
     }
   };
@@ -120,11 +124,13 @@ function App() {
 
       if (status === "FAILED") {
         stopPolling();
+
         setMessage("Processing failed.");
       }
 
       if (status === "CANCELLED") {
         stopPolling();
+
         setMessage("Job cancelled.");
       }
 
@@ -143,6 +149,7 @@ function App() {
   const previewSelectedFile = async () => {
     if (!file) {
       setMessage("Please select a CSV or Excel file.");
+
       return;
     }
 
@@ -152,6 +159,7 @@ function App() {
 
     try {
       setIsInspecting(true);
+
       setMessage("Reading dataset columns...");
 
       const response = await axios.post(
@@ -167,6 +175,7 @@ function App() {
       setPreviewPage(1);
       setTotalPages(1);
       setTotalRows(response.data.rows.length);
+
       setPreviewType("original");
 
       setTargetColumns([]);
@@ -190,22 +199,30 @@ function App() {
     setTargetColumns((currentColumns) => {
       if (currentColumns.includes(column)) {
         return currentColumns.filter(
-          (currentColumn) => currentColumn !== column
+          (currentColumn) =>
+            currentColumn !== column
         );
       }
 
-      return [...currentColumns, column];
+      return [
+        ...currentColumns,
+        column,
+      ];
     });
   };
 
   const uploadFile = async () => {
     if (!file) {
       setMessage("Please select a CSV or Excel file.");
+
       return;
     }
 
     if (!instruction.trim()) {
-      setMessage("Please enter a processing instruction.");
+      setMessage(
+        "Please enter a processing instruction."
+      );
+
       return;
     }
 
@@ -216,11 +233,15 @@ function App() {
       setMessage(
         "Please enter a replacement value for the replace transformation."
       );
+
       return;
     }
 
     if (targetColumns.length === 0) {
-      setMessage("Please select at least one target column.");
+      setMessage(
+        "Please select at least one target column."
+      );
+
       return;
     }
 
@@ -244,7 +265,9 @@ function App() {
 
     try {
       setIsUploading(true);
+
       setMessage("Uploading dataset...");
+
       setProgress(0);
       setJobStatus("");
       setPreviewType("original");
@@ -256,7 +279,9 @@ function App() {
 
       const id = response.data.job_id;
 
-      setMessage("Dataset uploaded. Processing started.");
+      setMessage(
+        "Dataset uploaded. Processing started."
+      );
 
       setJobId(id);
       setJobStatus(response.data.status);
@@ -295,6 +320,7 @@ function App() {
       stopPolling();
 
       setJobStatus(response.data.status);
+
       setMessage("Job cancelled.");
     } catch (error) {
       console.error(error);
@@ -325,16 +351,19 @@ function App() {
 
     setPreviewColumns([]);
     setPreviewRows([]);
+
     setPreviewPage(1);
     setTotalPages(0);
     setTotalRows(0);
+
     setPreviewType("original");
 
     setIsInspecting(false);
     setIsUploading(false);
     setIsLoadingPreview(false);
 
-    const fileInput = document.getElementById("fileInput");
+    const fileInput =
+      document.getElementById("fileInput");
 
     if (fileInput) {
       fileInput.value = "";
@@ -342,11 +371,13 @@ function App() {
   };
 
   const handleFileChange = (event) => {
-    const selectedFile = event.target.files[0];
+    const selectedFile =
+      event.target.files[0];
 
     stopPolling();
 
     setFile(selectedFile || null);
+
     setMessage("");
 
     setJobId(null);
@@ -358,16 +389,21 @@ function App() {
 
     setPreviewColumns([]);
     setPreviewRows([]);
+
     setPreviewPage(1);
     setTotalPages(0);
     setTotalRows(0);
+
     setPreviewType("original");
   };
 
   const handleTransformationChange = (event) => {
-    const selectedTransformation = event.target.value;
+    const selectedTransformation =
+      event.target.value;
 
-    setTransformationType(selectedTransformation);
+    setTransformationType(
+      selectedTransformation
+    );
 
     if (selectedTransformation !== "replace") {
       setReplacement("");
@@ -402,7 +438,10 @@ function App() {
       <header className="header">
         <div>
           <h1>RegexFlow</h1>
-          <p>Distributed Natural Language Data Processing</p>
+
+          <p>
+            Distributed Natural Language Data Processing
+          </p>
         </div>
       </header>
 
@@ -413,8 +452,8 @@ function App() {
               <h2>Process Dataset</h2>
 
               <p>
-                Upload a dataset, inspect its columns, and select
-                one or more target columns.
+                Upload a dataset, inspect its columns,
+                and select one or more target columns.
               </p>
             </div>
           </div>
@@ -438,32 +477,35 @@ function App() {
               </label>
 
               <span className="file-name">
-                {file ? file.name : "No file selected"}
+                {file
+                  ? file.name
+                  : "No file selected"}
               </span>
             </div>
           </div>
 
-          {file && availableColumns.length === 0 && (
-            <div className="button-row">
-              <button
-                className="secondary-button"
-                onClick={previewSelectedFile}
-                disabled={isInspecting}
-              >
-                {isInspecting
-                  ? "Loading..."
-                  : "Load Dataset Columns"}
-              </button>
-            </div>
-          )}
+          {file &&
+            availableColumns.length === 0 && (
+              <div className="button-row">
+                <button
+                  className="secondary-button"
+                  onClick={previewSelectedFile}
+                  disabled={isInspecting}
+                >
+                  {isInspecting
+                    ? "Loading..."
+                    : "Load Dataset Columns"}
+                </button>
+              </div>
+            )}
 
           <div className="form-group">
             <label>Target Columns</label>
 
             {availableColumns.length === 0 ? (
               <p>
-                Choose a dataset and load its columns to select
-                one or more target columns.
+                Choose a dataset and load its columns
+                to select one or more target columns.
               </p>
             ) : (
               <>
@@ -472,22 +514,28 @@ function App() {
                 </p>
 
                 <div className="target-columns">
-                  {availableColumns.map((column) => (
-                    <label
-                      key={column}
-                      className="target-column-option"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={targetColumns.includes(column)}
-                        onChange={() =>
-                          handleTargetColumnChange(column)
-                        }
-                      />
+                  {availableColumns.map(
+                    (column) => (
+                      <label
+                        key={column}
+                        className="target-column-option"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={targetColumns.includes(
+                            column
+                          )}
+                          onChange={() =>
+                            handleTargetColumnChange(
+                              column
+                            )
+                          }
+                        />
 
-                      <span>{column}</span>
-                    </label>
-                  ))}
+                        <span>{column}</span>
+                      </label>
+                    )
+                  )}
                 </div>
               </>
             )}
@@ -515,27 +563,30 @@ function App() {
 
             {transformationType === "replace" && (
               <p>
-                Replace every regex match with the replacement
-                value.
+                Replace every regex match with the
+                replacement value.
               </p>
             )}
 
             {transformationType === "extract" && (
               <p>
-                Keep only the values matched by the generated
-                regex.
+                Keep only the values matched by the
+                generated regex.
               </p>
             )}
 
             {transformationType === "mask" && (
               <p>
-                Replace matched values with a masked value.
+                Replace matched values with a masked
+                value.
               </p>
             )}
           </div>
 
           <div className="form-group">
-            <label>Natural Language Instruction</label>
+            <label>
+              Natural Language Instruction
+            </label>
 
             <textarea
               placeholder="Example: Find email addresses"
@@ -565,7 +616,10 @@ function App() {
             <button
               className="primary-button"
               onClick={uploadFile}
-              disabled={isUploading || isJobActive}
+              disabled={
+                isUploading ||
+                isJobActive
+              }
             >
               {isUploading
                 ? "Uploading..."
@@ -606,16 +660,19 @@ function App() {
             <div className="job-details">
               <div>
                 <span>Job ID</span>
+
                 <strong>{jobId}</strong>
               </div>
 
               <div>
                 <span>Progress</span>
+
                 <strong>{progress}%</strong>
               </div>
 
               <div>
                 <span>Rows</span>
+
                 <strong>
                   {totalRows.toLocaleString()}
                 </strong>
@@ -688,24 +745,30 @@ function App() {
               <table>
                 <thead>
                   <tr>
-                    {previewColumns.map((column) => (
-                      <th key={column}>
-                        {column}
-                      </th>
-                    ))}
+                    {previewColumns.map(
+                      (column) => (
+                        <th key={column}>
+                          {column}
+                        </th>
+                      )
+                    )}
                   </tr>
                 </thead>
 
                 <tbody>
-                  {previewRows.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {previewColumns.map((column) => (
-                        <td key={column}>
-                          {row[column]}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {previewRows.map(
+                    (row, rowIndex) => (
+                      <tr key={rowIndex}>
+                        {previewColumns.map(
+                          (column) => (
+                            <td key={column}>
+                              {row[column]}
+                            </td>
+                          )
+                        )}
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
