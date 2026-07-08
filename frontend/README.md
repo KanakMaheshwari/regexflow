@@ -1,16 +1,80 @@
-# React + Vite
+cat > frontend/README.md <<'EOF'
+# NL-to-Regex Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The frontend for the NL-to-Regex Distributed Data Processing Platform is built using React and Vite.
 
-Currently, two official plugins are available:
+It provides the user interface for uploading datasets, inspecting dataset columns, selecting target columns, configuring transformations, monitoring asynchronous processing jobs, previewing datasets, cancelling jobs, and downloading processed results.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Technology Stack
 
-## React Compiler
+- React
+- Vite
+- JavaScript
+- CSS
+- Axios
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Features
 
-## Expanding the ESLint configuration
+- Upload CSV and XLSX datasets
+- Inspect datasets before processing
+- Dynamically load dataset columns
+- Select one or more target columns
+- Enter natural-language processing instructions
+- Select Replace, Extract, or Mask transformations
+- Enter replacement values for Replace transformations
+- Submit asynchronous processing jobs
+- Display job status and progress
+- Preview dataset records
+- Navigate paginated previews
+- Cancel active jobs
+- Download processed datasets
+- Display validation and processing errors
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Application Workflow
+
+Select Dataset → Load Dataset Columns → Select Target Columns → Choose Transformation → Enter Instruction → Process Dataset → Monitor Progress → Download Result
+
+## Transformation Modes
+
+### Replace
+
+Replaces regex matches with a user-provided replacement value.
+
+### Extract
+
+Extracts content matching the generated regular expression.
+
+### Mask
+
+Masks content matching the generated regular expression.
+
+## Backend Communication
+
+The frontend communicates with the Django REST API using Axios.
+
+The default backend API URL is:
+
+http://localhost:8000/api
+
+## Running with Docker Compose
+
+From the root project directory:
+
+docker compose up --build
+
+The frontend is available at:
+
+http://localhost:5173
+
+## Linting
+
+docker compose exec frontend npm run lint
+
+## Production Build
+
+docker compose exec frontend npm run build
+
+## Related Documentation
+
+For complete project documentation, architecture, backend setup, Celery, Redis, Ollama, PySpark, testing, and design decisions, see the root project README.
+EOF
