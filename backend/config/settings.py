@@ -136,6 +136,9 @@ USE_TZ = True
 
 
 STATIC_URL = "static/"
+STATIC_URL = "static/"
+
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
 MEDIA_URL = "/media/"
