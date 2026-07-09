@@ -544,6 +544,9 @@ NLtoRegex/
 │   └── package.json
 │
 ├── docker-compose.yml
+├── docker-compose.prod.yml
+├── Caddyfile
+├── .env.production.example
 ├── generate_large_csv.py
 └── README.md
 ```
@@ -855,35 +858,195 @@ A production extension could use WebSockets or Server-Sent Events for real-time 
 
 ## Deployment
 
-The application is designed for container-based deployment.
+The submitted deployment uses a split hosting model:
 
-A production deployment requires:
+- Backend on an Ubuntu VPS using Docker Compose.
+- Frontend on Vercel from the `frontend/` directory.
+- HTTPS reverse proxy through Caddy.
+- Redis and Celery running beside Django on the VPS.
 
-- Django web service;
-- Celery worker;
-- Redis;
-- PySpark-compatible processing runtime;
-- persistent database;
-- persistent file storage;
-- frontend hosting;
-- environment-based OpenAI configuration.
+This keeps the React frontend on a static hosting platform while the backend runs on a normal server that can support Django, Celery, Redis, Java, Pandas, and PySpark.
 
-Production environment variables should include:
+### Backend VPS Deployment
+
+The production backend is defined by:
 
 ```text
+docker-compose.prod.yml
+Caddyfile
+.env.production.example
+```
+
+The production services are:
+
+```text
+django   Django + Gunicorn API server
+celery   Celery worker for async file processing
+redis    Celery broker, result backend, and regex cache
+caddy    HTTPS reverse proxy
+```
+
+Use an Ubuntu VPS with at least:
+
+```text
+2 vCPU / 4 GB RAM minimum
+4 vCPU / 8 GB RAM recommended
+```
+
+For the submitted deployment, an OVH VPS can be used with Ubuntu 24.04.
+
+Install Docker on the VPS:
+
+```bash
+sudo apt update
+sudo apt -y install ca-certificates curl git
+curl -fsSL https://get.docker.com | sudo sh
+sudo apt -y install docker-compose-plugin
+sudo usermod -aG docker ubuntu
+```
+
+Log out and SSH back in after adding the user to the Docker group.
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Spsden/regexflow.git
+cd regexflow
+```
+
+Create the production environment file:
+
+```bash
+cp .env.production.example .env
+nano .env
+```
+
+Example backend environment:
+
+```text
+BACKEND_DOMAIN=149.56.143.17.sslip.io
+DJANGO_ALLOWED_HOSTS=149.56.143.17.sslip.io,149.56.143.17
+CORS_ALLOWED_ORIGINS=https://regexflowdeployment.vercel.app
+CSRF_TRUSTED_ORIGINS=https://regexflowdeployment.vercel.app
+DJANGO_SECRET_KEY=replace-with-a-long-random-secret
+OPENAI_API_KEY=replace-with-your-openai-api-key
+OPENAI_MODEL=gpt-4.1-mini
+GUNICORN_WORKERS=2
+GUNICORN_TIMEOUT=180
+CELERY_CONCURRENCY=1
+```
+
+Generate a Django secret key value:
+
+```bash
+openssl rand -base64 48
+```
+
+Start the backend:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+```
+
+Check service status:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env ps
+```
+
+Test the deployed API:
+
+```bash
+curl https://149.56.143.17.sslip.io/api/hello/
+```
+
+Expected response:
+
+```json
+{"message":"Hello from Django!"}
+```
+
+View backend logs:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env logs -f django
+```
+
+Restart only Django after changing `.env`:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env restart django
+```
+
+### Frontend Vercel Deployment
+
+Import the repository into Vercel and configure the project as:
+
+```text
+Framework Preset: Vite
+Root Directory: frontend
+Install Command: npm install
+Build Command: npm run build
+Output Directory: dist
+```
+
+Add this Vercel environment variable:
+
+```text
+VITE_API_BASE_URL=https://149.56.143.17.sslip.io/api
+```
+
+Deploy the project. After Vercel provides the production URL, add that exact origin to the backend `.env`:
+
+```text
+CORS_ALLOWED_ORIGINS=https://regexflowdeployment.vercel.app
+CSRF_TRUSTED_ORIGINS=https://regexflowdeployment.vercel.app
+```
+
+Do not include a trailing slash in either value. This is invalid:
+
+```text
+https://regexflowdeployment.vercel.app/
+```
+
+After updating the backend `.env`, restart Django:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env restart django
+```
+
+### Production Environment Variables
+
+Backend VPS variables:
+
+```text
+BACKEND_DOMAIN
 OPENAI_API_KEY
 OPENAI_MODEL
 DJANGO_SECRET_KEY
-DJANGO_DEBUG
 DJANGO_ALLOWED_HOSTS
 CORS_ALLOWED_ORIGINS
 CSRF_TRUSTED_ORIGINS
-VITE_API_BASE_URL
-CELERY_BROKER_URL
-CELERY_RESULT_BACKEND
+GUNICORN_WORKERS
+GUNICORN_TIMEOUT
+CELERY_CONCURRENCY
 ```
 
-The deployment URL will be added after deployment.
+Frontend Vercel variable:
+
+```text
+VITE_API_BASE_URL
+```
+
+### Deployment Notes
+
+- `DJANGO_DEBUG` is forced to `False` in `docker-compose.prod.yml`.
+- Redis is not exposed publicly.
+- Caddy exposes only ports `80` and `443`.
+- Celery is configured with `CELERY_CONCURRENCY=1` by default to keep memory usage stable on a small VPS.
+- Uploaded and processed files are stored on the VPS filesystem in this deployment.
+- For a long-term production deployment, use PostgreSQL and object storage instead of SQLite and local uploads.
+- If an API key is exposed in a screenshot or commit history, revoke it and create a new key.
 
 ---
 
